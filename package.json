@@ -1,0 +1,9 @@
+{
+  "name": "circlepuzzle",
+  "private": true,
+  "description": "回転ナンプレ：正方形を回して1〜8をそろえるパズル（静的サイト）",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
