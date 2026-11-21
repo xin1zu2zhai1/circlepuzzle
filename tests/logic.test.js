@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 
 import { COLS, GROUPS, ROWS, SQUARES, TRIANGLES, TRI_COUNT } from '../js/board.js';
 import {
+  ALL_MOVES,
+  DIFFICULTIES,
   applyMoves,
   decodePuzzle,
+  difficultyFromShortest,
   duplicateGroups,
   encodePuzzle,
+  findShortestSolution,
   generatePuzzle,
   generateSolved,
   invertMoves,
@@ -14,6 +18,8 @@ import {
   mulberry32,
   randomMoves,
   rotate,
+  squaresCommute,
+  stepOf,
   validateBoard,
 } from '../js/logic.js';
 
@@ -118,17 +124,37 @@ test('6. 生成 1,000 回：各数字 4 個ずつ、出題時は未クリア、�
     assert.equal(validateBoard(p.board), null);
     assert.equal(isSolved(p.board), false);
     if (difficulty === 'random') {
-      assert.equal(p.genMoves, 0);
+      assert.equal(p.shortest, null);
       continue;
     }
     assert.equal(isSolved(p.solved), true);
-    assert.equal(p.scramble.length, p.genMoves);
+    assert.equal(p.scramble.length, p.shortest);
     const back = applyMoves(p.board, invertMoves(p.scramble), mode);
     assert.deepEqual(back, p.solved);
   }
 });
 
-test('6b. スクランブルは直前の手を打ち消さず、同じ手を半周より長く続けない', () => {
+test('6d. 生成した問題の最短手数は難易度の範囲内で、それより短くは解けない', () => {
+  for (const mode of ['45', '90']) {
+    for (const diff of DIFFICULTIES) {
+      const seen = new Set();
+      for (let seed = 1; seed <= 40; seed++) {
+        const p = generatePuzzle({ mode, difficulty: diff.key, seed });
+        assert.ok(p.shortest >= diff.min && p.shortest <= diff.max, `${mode} ${diff.key}: ${p.shortest}`);
+        assert.equal(findShortestSolution(p.board, mode, p.shortest - 1), null);
+        const path = findShortestSolution(p.board, mode, p.shortest);
+        assert.equal(path.length, p.shortest);
+        assert.equal(isSolved(applyMoves(p.board, path, mode)), true);
+        assert.equal(difficultyFromShortest(p.shortest).key, diff.key);
+        seen.add(p.shortest);
+      }
+      // 範囲が 2 手以上ある難易度では、どの手数も出題される
+      for (let n = diff.min; n <= diff.max; n++) assert.ok(seen.has(n), `${mode} ${diff.key} never gives ${n}`);
+    }
+  }
+});
+
+test('6b. スクランブルは直前の手を打ち消さず、同じ手を半周より長く続けず、四隅は番号順', () => {
   const rng = mulberry32(7);
   for (const [mode, maxRun] of [['45', 4], ['90', 2]]) {
     const moves = randomMoves(5000, mode, rng);
@@ -137,9 +163,14 @@ test('6b. スクランブルは直前の手を打ち消さず、同じ手を半�
       const a = moves[i - 1];
       const b = moves[i];
       assert.ok(!(a.square === b.square && a.dir === -b.dir), 'cancelling move');
+      assert.ok(!(squaresCommute(a.square, b.square) && b.square < a.square), 'unsorted corner moves');
       run = a.square === b.square && a.dir === b.dir ? run + 1 : 1;
       assert.ok(run <= maxRun, `run of ${run} in ${mode}° mode`);
     }
+  }
+  // 重ならないのは四隅の正方形どうしだけ
+  for (let a = 0; a < 5; a++) {
+    for (let b = 0; b < 5; b++) assert.equal(squaresCommute(a, b), a !== b && a < 4 && b < 4);
   }
 });
 
@@ -170,11 +201,13 @@ test('8. 共有 URL：書き出して読み込むと一致し、不正な値は�
     const mode = seed % 2 ? '45' : '90';
     const p = generatePuzzle({ mode, difficulty: 'hard', seed });
     const query = encodePuzzle(p);
-    assert.match(query, /^m=(45|90)&s=[1-8]{32}&p=10$/);
+    assert.match(query, /^m=(45|90)&s=[1-8]{32}&p=4$/);
     const r = decodePuzzle(`?${query}`);
     assert.equal(r.ok, true);
-    assert.deepEqual(r.puzzle, { mode, board: p.board, genMoves: 10 });
+    assert.deepEqual(r.puzzle, { mode, board: p.board, p: 4 });
   }
+  const random = generatePuzzle({ mode: '45', difficulty: 'random', seed: 3 });
+  assert.match(encodePuzzle(random), /&p=0$/);
 
   const good = INIT.join('');
   assert.equal(decodePuzzle(''), null);
@@ -183,15 +216,59 @@ test('8. 共有 URL：書き出して読み込むと一致し、不正な値は�
   // 桁数違い
   assert.equal(decodePuzzle(`?m=45&s=${good.slice(1)}&p=3`).ok, false);
   assert.equal(decodePuzzle(`?m=45&s=${good}1&p=3`).ok, false);
-  // 0 や 9 の混入（個数は 4 個ずつのまま差し替えても拒否される）
+  // 0 や 9 の混入
   assert.equal(decodePuzzle(`?m=45&s=0${good.slice(1)}&p=3`).ok, false);
   assert.equal(decodePuzzle(`?m=45&s=9${good.slice(1)}&p=3`).ok, false);
   assert.equal(decodePuzzle(`?m=45&s=a${good.slice(1)}&p=3`).ok, false);
   // 個数の偏り
   assert.equal(decodePuzzle(`?m=45&s=1${good.slice(1)}&p=3`).ok, false);
   assert.equal(decodePuzzle(`?m=45&s=${'12345678'.repeat(3)}11111111&p=3`).ok, false);
-  // モードと作成手数の誤り
+  // モードと手数の誤り
   assert.equal(decodePuzzle(`?m=60&s=${good}&p=3`).ok, false);
   assert.equal(decodePuzzle(`?m=45&s=${good}&p=-1`).ok, false);
   assert.equal(decodePuzzle(`?m=45&s=${good}&p=x`).ok, false);
+});
+
+/** 総当たり（重複除去なし）で、limit 手以内の最短手数を求める。見つからなければ null */
+function bruteForceShortest(board, mode, limit) {
+  if (isSolved(board)) return 0;
+  const step = stepOf(mode);
+  let layer = [board];
+  for (let d = 1; d <= limit; d++) {
+    const next = [];
+    for (const b of layer) {
+      for (const m of ALL_MOVES) {
+        const nb = rotate(b, m.square, m.dir * step);
+        if (isSolved(nb)) return d;
+        next.push(nb);
+      }
+    }
+    layer = next;
+  }
+  return null;
+}
+
+test('9. 最短手数の探索は総当たりと一致し、返す手順で実際にクリアできる', () => {
+  for (const mode of ['45', '90']) {
+    const rng = mulberry32(mode === '45' ? 11 : 22);
+    for (let i = 0; i < 40; i++) {
+      const solved = generateSolved(rng);
+      const n = 1 + (i % 4);
+      // 打ち消しや入れ替えも起こるように、生成用の制限なしで崩す
+      const moves = Array.from({ length: n }, () => ALL_MOVES[Math.floor(rng() * ALL_MOVES.length)]);
+      const board = applyMoves(solved, moves, mode);
+      const expected = bruteForceShortest(board, mode, 4);
+      const path = findShortestSolution(board, mode, 4);
+      assert.equal(path?.length ?? null, expected);
+      if (path) assert.equal(isSolved(applyMoves(board, path, mode)), true);
+    }
+  }
+  // 手書き図：90°モードでは S1 と S2 を 180° ずつ（計 4 手）で完成する
+  const path90 = findShortestSolution(INIT, '90', 6);
+  assert.ok(path90.length <= 4);
+  assert.equal(isSolved(applyMoves(INIT, path90, '90')), true);
+  // 45°モードでは 8 手かかるので、4 手以内には解けない
+  assert.equal(findShortestSolution(INIT, '45', 4), null);
+  // クリア済みの盤面は 0 手
+  assert.deepEqual(findShortestSolution(SOLVED, '45', 6), []);
 });

@@ -5,11 +5,13 @@ import {
   DEFAULT_DIFFICULTY,
   DEFAULT_MODE,
   DIFFICULTIES,
+  MAX_VERIFIED_MOVES,
   MODES,
   RANDOM_PLACEMENT,
   applyMove,
   decodePuzzle,
-  difficultyFromGenMoves,
+  difficultyFromShortest,
+  difficultyRangeLabel,
   duplicateGroups,
   encodePuzzle,
   findDifficulty,
@@ -18,6 +20,7 @@ import {
   isSolved,
   moveToK,
   rotationMap,
+  shortestMoves,
 } from './logic.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -264,14 +267,15 @@ export function createApp() {
   const $ = (id) => document.getElementById(id);
   const saved = storage.load();
   const settings = loadSettings(saved.settings);
-  const bests = loadBests(saved.bests);
-  const persist = () => storage.save({ settings, bests });
+  // 難易度を最短手数で分けるようにしたので、作成手数で分けていた旧記録（bests）は引き継がない
+  const bests = loadBests(saved.records);
+  const persist = () => storage.save({ settings, records: bests });
 
   const el = {
     board: $('board'),
     moves: $('st-moves'),
     time: $('st-time'),
-    gen: $('st-gen'),
+    shortest: $('st-shortest'),
     mode: $('st-mode'),
     diff: $('st-diff'),
     notice: $('notice'),
@@ -307,7 +311,7 @@ export function createApp() {
   const state = {
     mode: DEFAULT_MODE,
     difficulty: DEFAULT_DIFFICULTY,
-    genMoves: 0,
+    shortest: null,
     initial: [],
     board: [],
     history: [],
@@ -360,6 +364,12 @@ export function createApp() {
     return findDifficulty(state.difficulty)?.label ?? '共有された問題';
   }
 
+  /** 最短手数の表示。調べていない（ランダム配置）なら「—」、上限を超えたら「7+」 */
+  function shortestText() {
+    if (state.shortest != null) return String(state.shortest);
+    return state.difficulty === RANDOM_PLACEMENT.key ? '—' : `${MAX_VERIFIED_MOVES + 1}+`;
+  }
+
   function renderBoard() {
     const dups = duplicateGroups(state.board);
     state.board.forEach((v, id) => {
@@ -377,7 +387,7 @@ export function createApp() {
   function renderStatus() {
     el.moves.textContent = String(state.cursor);
     el.time.textContent = formatTime(timer.elapsed());
-    el.gen.textContent = state.genMoves > 0 ? String(state.genMoves) : '—';
+    el.shortest.textContent = shortestText();
     el.mode.textContent = `${MODES[state.mode].label}モード`;
     el.diff.textContent = difficultyLabel();
     el.undo.disabled = state.solved || state.cursor === 0;
@@ -574,9 +584,13 @@ export function createApp() {
     el.board.classList.add('solved');
     el.clearMoves.textContent = `${moves}手`;
     el.clearTime.textContent = formatTime(time);
-    const within = state.genMoves > 0 && moves <= state.genMoves;
-    el.clearWithin.hidden = !within;
-    el.clearWithin.textContent = within ? `作成手数（${state.genMoves}手）以内でクリアしました。` : '';
+    const best = state.shortest != null && state.shortest > 0;
+    el.clearWithin.hidden = !best;
+    el.clearWithin.classList.toggle('best', best && moves <= state.shortest);
+    if (best) {
+      el.clearWithin.textContent =
+        moves <= state.shortest ? `最短手数（${state.shortest}手）でクリアしました！` : `最短手数は${state.shortest}手です。`;
+    }
     el.clearBest.hidden = !improved;
     el.clearBest.textContent = improved ? `ベスト記録を更新しました（${MODES[state.mode].label}・${difficultyLabel()}）` : '';
     openDialog(el.dlgClear);
@@ -584,10 +598,10 @@ export function createApp() {
 
   // ------------------------------------------------------------ 問題の読み込み
 
-  function loadPuzzle({ mode, board, genMoves, difficulty }) {
+  function loadPuzzle({ mode, board, shortest, difficulty }) {
     state.mode = mode;
     state.difficulty = difficulty;
-    state.genMoves = genMoves;
+    state.shortest = shortest;
     state.initial = board.slice();
     state.board = board.slice();
     state.history = [];
@@ -614,7 +628,7 @@ export function createApp() {
     let diff = difficulty;
     if (diff === RANDOM_PLACEMENT.key && mode !== '45') diff = DEFAULT_DIFFICULTY;
     const p = generatePuzzle({ mode, difficulty: diff });
-    loadPuzzle({ mode, board: p.board, genMoves: p.genMoves, difficulty: p.difficulty });
+    loadPuzzle({ mode, board: p.board, shortest: p.shortest, difficulty: p.difficulty });
     clearSharedQuery();
     hideNotice();
   }
@@ -630,12 +644,18 @@ export function createApp() {
       showNotice(`共有URLの問題を読み込めませんでした（${result.error}）。新しい問題を出しました。`, 'error');
       return;
     }
-    const { mode, board, genMoves } = result.puzzle;
-    let difficulty = difficultyFromGenMoves(genMoves)?.key ?? null;
-    if (difficulty === RANDOM_PLACEMENT.key && mode !== '45') difficulty = null;
-    loadPuzzle({ mode, board, genMoves, difficulty });
-    if (mode === '90') {
-      showNotice('共有URLから読み込んだ90°モードの配置です。解けることは保証されません。', 'warn');
+    // 最短手数は URL の値を信用せず、6 手まで探して確かめる（最悪でも数十 ms）
+    const { mode, board, p } = result.puzzle;
+    const shortest = shortestMoves(board, mode, MAX_VERIFIED_MOVES);
+    let difficulty = null;
+    if (shortest != null) difficulty = difficultyFromShortest(shortest)?.key ?? null;
+    else if (mode === '45' && p === 0) difficulty = RANDOM_PLACEMENT.key;
+    loadPuzzle({ mode, board, shortest, difficulty });
+    if (mode === '90' && shortest == null) {
+      showNotice(
+        `共有URLから読み込んだ90°モードの配置です。${MAX_VERIFIED_MOVES}手以内では解けず、解けることは保証されません。`,
+        'warn',
+      );
     } else {
       hideNotice();
     }
@@ -643,7 +663,7 @@ export function createApp() {
 
   async function share() {
     const url = new URL(globalThis.location.href);
-    url.search = `?${encodePuzzle({ mode: state.mode, board: state.initial, genMoves: state.genMoves })}`;
+    url.search = `?${encodePuzzle({ mode: state.mode, board: state.initial, shortest: state.shortest })}`;
     url.hash = '';
     const text = url.toString();
     if (await copyText(text)) toast('問題のURLをコピーしました');
@@ -687,7 +707,7 @@ export function createApp() {
         'span',
         { class: 'sub' },
         span,
-        d.key === RANDOM_PLACEMENT.key ? '1〜8を4個ずつ並べるだけ（45°モードのみ）' : `作成手数 ${d.moves}手`,
+        d.key === RANDOM_PLACEMENT.key ? '1〜8を4個ずつ並べるだけ（45°モードのみ）' : `最短 ${difficultyRangeLabel(d)}`,
       );
     }
   }

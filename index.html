@@ -31,7 +31,7 @@
     <section class="stats" aria-label="状況">
       <div class="stat"><span class="label">手数</span><span class="value" id="st-moves">0</span></div>
       <div class="stat"><span class="label">時間</span><span class="value" id="st-time">0:00</span></div>
-      <div class="stat"><span class="label">作成手数</span><span class="value" id="st-gen">—</span></div>
+      <div class="stat"><span class="label">最短手数</span><span class="value" id="st-shortest">—</span></div>
     </section>
 
     <p id="notice" class="notice" role="status" hidden></p>
@@ -116,8 +116,14 @@
           <li><b>45°モード：</b>1回で数字が隣の三角形へ1つずつ移ります。8回で一周します。</li>
           <li><b>90°モード：</b>1回で正方形が90°回ります。マスの中の2枚はセットで動きます。4回で一周します。</li>
         </ul>
-        <h3>作成手数</h3>
-        <p>問題は完成形をランダムに回して作るので、必ず解けます。作成手数は、そのときに回した回数です。もっと短い手数で解けることもあります。</p>
+        <h3>最短手数</h3>
+        <p>問題は完成形をランダムに回して作るので、必ず解けます。作るときに、いちばん近い完成形まで何手かかるかを調べて「最短手数」として表示します。完成形は1つではないので、最初の形とは違う完成形にたどり着いてもクリアです。</p>
+        <ul>
+          <li>やさしい：最短1〜2手</li>
+          <li>ふつう：最短3手</li>
+          <li>むずかしい：最短4手</li>
+          <li>鬼：最短5〜6手</li>
+        </ul>
         <h3>補助表示</h3>
         <p>設定で、重複がある列や正方形の強調と、数字ごとの色分けを切り替えられます。重複の強調では、盤面の左と上の印と、ハンドルのふちの色で、そろった列（緑）とそろっていない列（橙）がわかります。</p>
       </div>
