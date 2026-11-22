@@ -265,10 +265,10 @@ test('9. 最短手数の探索は総当たりと一致し、返す手順で実�
   }
   // 手書き図：90°モードでは S1 と S2 を 180° ずつ（計 4 手）で完成する
   const path90 = findShortestSolution(INIT, '90', 6);
-  assert.ok(path90.length <= 4);
+  assert.equal(path90.length, 4);
   assert.equal(isSolved(applyMoves(INIT, path90, '90')), true);
-  // 45°モードでは 8 手かかるので、4 手以内には解けない
-  assert.equal(findShortestSolution(INIT, '45', 4), null);
+  // 45°モードでは S1・S2 を 180° ずつ回すのに 8 手かかり、6 手以内には解けない
+  assert.equal(findShortestSolution(INIT, '45', 6), null);
   // クリア済みの盤面は 0 手
   assert.deepEqual(findShortestSolution(SOLVED, '45', 6), []);
 });
